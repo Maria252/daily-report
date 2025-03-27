@@ -1,24 +1,49 @@
 import os
+from notion_client import Client
+from datetime import datetime, date, timedelta
+import pytz
+from dotenv import load_dotenv
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 import requests
-import datetime
+from google.auth.transport.requests import Request
 
 #########################################
 # Variables de entorno esperadas:
-# NOTION_API_KEY          -> Token secreto de Notion
-# NOTION_DATABASE_ID      -> ID de la base de datos Notion que contiene las tareas 
-# GOOGLE_CALENDAR_API_KEY -> Clave o token para Google Calendar 
-# TEAMS_WEBHOOK_URL       -> Webhook de Microsoft Teams 
+# NOTION_API_KEY                  -> Token secreto de Notion
+# NOTION_DATABASE_ID              -> ID de la base de datos Notion que contiene las tareas
+# GOOGLE_CALENDAR_API_KEY         -> Clave o token para Google Calendar
+# TEAMS_WEBHOOK_URL               -> Webhook de Microsoft Teams
+# GOOGLE_CALENDAR_CREDENTIALS_JSON -> Contenido del archivo credentials.json
 #########################################
 
+load_dotenv()
+
+# Lee los valores de los secrets (variables de entorno)
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
-GOOGLE_CALENDAR_API_KEY = os.environ.get("GOOGLE_CALENDAR_API_KEY", "")
 TEAMS_WEBHOOK_URL = os.environ.get("TEAMS_WEBHOOK_URL", "")
+GOOGLE_CALENDAR_CREDENTIALS_JSON = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS_JSON", "")
+
+# Crea un archivo credentials.json usando el contenido almacenado en el secret
+if GOOGLE_CALENDAR_CREDENTIALS_JSON:
+    with open('credentials.json', 'w') as f:
+        f.write(GOOGLE_CALENDAR_CREDENTIALS_JSON)
 
 def get_notion_tasks():
     """
-    Obtiene tareas desde una base de datos de Notion.
-    Retorna una lista de dicts, cada uno con 'titulo' y 'fecha' (formato YYYY-MM-DD).
+    Obtiene tareas de una base de datos Notion con propiedades:
+      - 'Task' (title)
+      - 'Due Date' (date)
+      - 'Complete' (checkbox)
+
+    Retorna lista de dicts con:
+      {
+        "titulo": str or "(Sin título)",
+        "fecha": str (YYYY-MM-DD) or None,
+        "complete": bool
+      }
     """
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
@@ -27,72 +52,165 @@ def get_notion_tasks():
         "Content-Type": "application/json"
     }
 
-    # Ajusta 'filter' o 'sort' según tus necesidades
     data = {}
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
+
     results = response.json().get("results", [])
-
     tareas = []
+
     for page in results:
-        # Aquí debes extraer la propiedad que contenga el título
-        # y la propiedad que contenga la fecha (Due Date).
-        # Ejemplo ficticio:
+        prop_task = page["properties"].get("Task", {})
+        title_entries = prop_task.get("title", [])
+        if len(title_entries) > 0:
+            titulo = title_entries[0]["plain_text"]
+        else:
+            titulo = "(Sin título)"
 
-        titulo = "Sin título"
         fecha_iso = None
+        prop_due = page["properties"].get("Due Date", {})
+        if prop_due.get("type") == "date":
+            date_dict = prop_due.get("date")
+            if date_dict:
+                fecha_iso = date_dict.get("start")
 
-        # Supongamos que tienes una propiedad "Name" tipo título:
-        if "Name" in page["properties"]:
-            titulo_rich = page["properties"]["Name"].get("title", [])
-            if len(titulo_rich) > 0:
-                titulo = titulo_rich[0]["plain_text"]
+        esta_completa = False
+        prop_complete = page["properties"].get("Complete", {})
+        if prop_complete.get("type") == "checkbox":
+            esta_completa = prop_complete.get("checkbox", False)
 
-        # Supongamos que tienes una propiedad "DueDate" tipo date:
-        if "DueDate" in page["properties"]:
-            date_prop = page["properties"]["DueDate"].get("date", {})
-            fecha_iso = date_prop.get("start")  # e.g. '2025-03-26'
-
-        # Si no hay fecha, podrías saltar o poner un valor por defecto
-        if fecha_iso:
-            tareas.append({
-                "titulo": titulo,
-                "fecha": fecha_iso[:10]  # YYYY-MM-DD
-            })
+        tareas.append({
+            "titulo": titulo,
+            "fecha": fecha_iso[:10] if fecha_iso else None,
+            "complete": esta_completa
+        })
 
     return tareas
 
+# Alcance para Google Calendar
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+
+def get_google_calendar_service():
+    """
+    Returns an authenticated service object to call the Google Calendar API.
+    This uses OAuth 2.0 credentials from 'credentials.json'.
+    If there's no valid token, you'll be prompted to log in in a local browser.
+    """
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+    service = build('calendar', 'v3', credentials=creds)
+    return service
+
+def get_calendar_id_by_summary(service, summary_name="Calendario"):
+    """
+    Retrieves the calendar ID for a calendar with the given summary (name).
+    Returns the calendar ID if found; otherwise, returns None.
+    """
+    calendar_list = service.calendarList().list().execute()
+    for calendar in calendar_list.get("items", []):
+        if calendar.get("summary") == summary_name:
+            return calendar.get("id")
+    return None
+
+def get_google_calendar_events_yesterday_today():
+    """
+    Fetches events from the Google Calendar named 'Calendario'
+    between yesterday 00:00:00 UTC and today 23:59:59 UTC.
+    Returns a list of dicts with {'titulo': '...', 'fecha': 'YYYY-MM-DD'}.
+    """
+    service = get_google_calendar_service()
+    calendar_id = get_calendar_id_by_summary(service, "Calendario")
+    if not calendar_id:
+        print("Calendar 'Calendario' not found.")
+        return []
+
+    now_utc = datetime.utcnow()
+    today_00_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_00_utc = today_00_utc - timedelta(days=1)
+    today_23_59_utc = today_00_utc + timedelta(days=1, seconds=-1)
+
+    time_min = yesterday_00_utc.isoformat() + 'Z'
+    time_max = today_23_59_utc.isoformat() + 'Z'
+    print("Fetching events from:", time_min, "to:", time_max)
+
+    events_result = service.events().list(
+        calendarId=calendar_id,
+        timeMin=time_min,
+        timeMax=time_max,
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+
+    items = events_result.get('items', [])
+    results = []
+    for ev in items:
+        summary = ev.get('summary', 'Sin título')
+        start = ev['start'].get('dateTime', ev['start'].get('date'))
+        date_str = start[:10] if start else None
+        results.append({"titulo": summary, "fecha": date_str})
+    return results
+
 def get_google_calendar_events():
     """
-    Obtiene eventos desde Google Calendar (versión simplificada).
-    Retorna lista de dicts con 'titulo' y 'fecha' (YYYY-MM-DD).
+    Example function to fetch the upcoming events from the Google Calendar named 'Calendario'.
+    Returns a list of dicts with {'titulo': '...', 'fecha': 'YYYY-MM-DD'}.
     """
-    # En la práctica, usarías la API oficial de Google con OAuth o una API key
-    # Esto es solo un placeholder de ejemplo.
+    service = get_google_calendar_service()
+    calendar_id = get_calendar_id_by_summary(service, "Calendario")
+    if not calendar_id:
+        print("Calendar 'Calendario' not found.")
+        return []
 
-    # Ejemplo: supongamos que tienes un endpoint o ya la respuesta parseada:
-    eventos = [
-        # Simulando dos eventos: uno de hoy, otro de ayer
-        {"titulo": "Reunión con equipo", "fecha": "2025-03-25"},
-        {"titulo": "Presentación de resultados", "fecha": "2025-03-26"},
-    ]
+    now = datetime.utcnow().isoformat() + 'Z'
+    print("Getting the upcoming 10 events from current time:", now)
 
-    return eventos
+    events_result = service.events().list(
+        calendarId=calendar_id,
+        timeMin=now,
+        maxResults=10,
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+
+    events = events_result.get('items', [])
+    results = []
+    for ev in events:
+        summary = ev.get('summary', 'Sin título')
+        start = ev['start'].get('dateTime', ev['start'].get('date'))
+        fecha_str = start[:10] if start else None
+        results.append({"titulo": summary, "fecha": fecha_str})
+    return results
 
 def separar_ayer_hoy(lista):
     """
-    Separa una lista de dicts [{'titulo': '...', 'fecha': 'YYYY-MM-DD'}, ...]
-    en dos listas: (ayer_list, hoy_list).
+    Separa una lista de diccionarios [{'titulo': '...', 'fecha': 'YYYY-MM-DD'}, ...]
+    en dos listas: una para eventos de ayer y otra para eventos de hoy.
+    Ignora los elementos que no tengan una fecha válida.
     """
-    hoy = datetime.date.today()           # p.ej. 2025-03-26
-    ayer = hoy - datetime.timedelta(days=1)
+    hoy = date.today()
+    ayer = hoy - timedelta(days=1)
 
     ayer_list = []
     hoy_list = []
 
     for elemento in lista:
-        fecha_iso = elemento["fecha"]     # e.g. '2025-03-26'
-        fecha_dt = datetime.date.fromisoformat(fecha_iso)  # datetime.date(2025,3,26)
+        fecha_iso = elemento.get("fecha")
+        if not fecha_iso:
+            continue
+
+        try:
+            fecha_dt = date.fromisoformat(fecha_iso)
+        except ValueError:
+            continue
 
         if fecha_dt == ayer:
             ayer_list.append(elemento["titulo"])
@@ -101,50 +219,58 @@ def separar_ayer_hoy(lista):
 
     return (ayer_list, hoy_list)
 
-# 5.4 Función para enviar datos a Power Automate (Teams Chat)
 def enviar_a_power_automate(mensaje):
-    teams_flow_url = os.environ.get("TEAMS_FLOW_URL", "")
-    if not teams_flow_url:
-        print("No hay TEAMS_FLOW_URL configurado.")
+    """
+    Envía un mensaje a Power Automate para que lo publique en Teams
+    usando el webhook configurado.
+    """
+    if not TEAMS_WEBHOOK_URL:
+        print("❌ TEAMS_WEBHOOK_URL no está configurado.")
         return
+    
+    mensaje = mensaje.replace('"', '')
 
     payload = {
         "mensaje": mensaje,
-        "autor": "Python Script"
+        "autor": "Maria Paula Diaz"
     }
 
-    resp = requests.post(teams_flow_url, json=payload)
-    if resp.status_code < 300:
-        print("Mensaje enviado a Power Automate con éxito.")
-    else:
-        print(f"Error al enviar mensaje: {resp.text}")
+    print("Payload a enviar:", payload)
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.post(TEAMS_WEBHOOK_URL, json=payload, headers=headers)
+        response.raise_for_status()
+        print("✅ Mensaje enviado correctamente a Teams.")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error al enviar mensaje: {e}")
+        if response is not None:
+            print(f"🔍 Respuesta del servidor: {response.text}")
 
 def main():
     # 1) Obtener tareas de Notion
     tareas_notion = get_notion_tasks()
     # 2) Obtener eventos del calendario
-    eventos_calendar = get_google_calendar_events()
+    eventos_calendar = get_google_calendar_events_yesterday_today()
 
-    # 3) Unir ambas listas si quieres procesarlas en conjunto
+    # 3) Unir ambas listas
     todos = tareas_notion + eventos_calendar
 
     # 4) Separar en listas de ayer y hoy
     ayer_list, hoy_list = separar_ayer_hoy(todos)
 
     # 5) Construir mensaje
-    mensaje = "¿Qué completé ayer?\n"
-    if ayer_list:
-        mensaje += "\n".join(f"- {t}" for t in ayer_list)
-    else:
-        mensaje += "- Ninguna tarea/evento ayer"
-
-    mensaje += "\n\n¿En qué trabajaré hoy?\n"
-    if hoy_list:
-        mensaje += "\n".join(f"- {t}" for t in hoy_list)
-    else:
-        mensaje += "- Ninguna tarea/evento hoy"
-
-    mensaje += "\n\n¿Tienes algún obstáculo o necesitas ayuda?\nNo."
+    mensaje = (
+        "**¿Qué completé ayer?**\n\n" +
+        ("- " + "\n- ".join(ayer_list) if ayer_list else "Ninguna tarea/evento ayer") + "\n\n" +
+        "**¿En qué trabajaré hoy?**\n\n" +
+        ("- " + "\n- ".join(hoy_list) if hoy_list else "Ninguna tarea/evento hoy") + "\n\n" +
+        "**¿Tienes algún obstáculo o necesitas ayuda?**\n\n" +
+        "No."
+    )
 
     # 6) Enviar a Teams
     enviar_a_power_automate(mensaje)
