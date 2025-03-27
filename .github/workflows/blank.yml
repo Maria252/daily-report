@@ -1,40 +1,16 @@
-name: Python Daily Automation
+name: Scheduled weekday job
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # Runs every day at 08:00 UTC
-  workflow_dispatch: {}   # Allows manual execution
+    - cron: "0 10 * * 1-5"  # Lunes a viernes a las 10:00 (UTC)
 
 jobs:
-  build:
+  run-script:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v2
-        with:
-          python-version: '3.9'
-
-      - name: Install dependencies
-        run: |
-          pip install requests
-          # pip install any other libraries you need
-
-      - name: Run script
-        run: python main.py
-        env:
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          CALENDAR_API_KEY: ${{ secrets.CALENDAR_API_KEY }}
-          TEAMS_FLOW_URL: ${{ secrets.TEAMS_FLOW_URL }}
-
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      - name: Run a multi-line script
-        run: |
-          echo "Add other actions to build,"
-          echo "test, and deploy your project."
+      - name: Run a sample command
+        run: echo "Ejecución programada de lunes a viernes a las 10:00 (UTC)"
 
