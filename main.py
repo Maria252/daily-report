@@ -46,6 +46,7 @@ def get_notion_tasks():
       }
     """
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+    print(f"URL Notion: {url}") 
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Notion-Version": "2022-06-28",
