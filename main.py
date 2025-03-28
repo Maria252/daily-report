@@ -93,12 +93,22 @@ def get_notion_tasks():
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 def get_google_calendar_service():
-    credentials_json = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_JSON")
-    if not credentials_json:
-        raise ValueError("❌ ERROR: GOOGLE_CALENDAR_CREDENTIALS_JSON no está definido.")
-    
-    creds_data = json.loads(credentials_json)
-    creds = service_account.Credentials.from_service_account_info(creds_data, scopes=SCOPES)
+    """
+    Returns an authenticated service object to call the Google Calendar API.
+    This uses OAuth 2.0 credentials from 'credentials.json'.
+    If there's no valid token, you'll be prompted to log in in a local browser.
+    """
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
     service = build('calendar', 'v3', credentials=creds)
     return service
 
