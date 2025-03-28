@@ -2,15 +2,25 @@ name: Scheduled job
 
 on:
   schedule:
-    - cron: "0 10 * * 1-5"
-  workflow_dispatch:
+    - cron: "0 10 * * 1-5"  # Corre Lunes a Viernes a las 10:00 UTC
+  workflow_dispatch:  # Habilita ejecución manual
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4  # Obtiene el código del repo
 
-      - name: Ejecutar script o comando
-        run: echo "Ejecutando a las 10:00 AM de lunes a viernes"
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"  # Asegúrate de usar la versión adecuada
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt || echo "No se encontró requirements.txt"
+
+      - name: Ejecutar `main.py`
+        run: python main.py  # Ejecuta el script en el repositorio
+
