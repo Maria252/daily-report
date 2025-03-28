@@ -92,24 +92,21 @@ def get_notion_tasks():
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 def get_google_calendar_service():
-    """
-    Returns an authenticated service object to call the Google Calendar API.
-    This uses OAuth 2.0 credentials from 'credentials.json'.
-    If there's no valid token, you'll be prompted to log in in a local browser.
-    """
+    """Autentica con Google Calendar sin abrir un navegador."""
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-    service = build('calendar', 'v3', credentials=creds)
-    return service
+    credentials_json = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_JSON")
+
+    if not credentials_json:
+        raise ValueError("❌ ERROR: La variable de entorno GOOGLE_CALENDAR_CREDENTIALS_JSON no está definida.")
+
+    # Convertir JSON en string a diccionario
+    creds_data = json.loads(credentials_json)
+
+    # Crear credenciales a partir de las credenciales en JSON
+    flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
+    creds = flow.run_console()  # Cambia de `run_local_server` a `run_console`
+    
+    return creds
 
 def get_calendar_id_by_summary(service, summary_name="Calendario"):
     """
