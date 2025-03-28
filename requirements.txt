@@ -1,0 +1,9 @@
+notion-client==2.3.0
+python-dotenv==1.0.1
+pytz==2024.1
+google-auth==2.32.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+googleapis-common-protos==1.63.2
+google-api-python-client==2.137.0
+requests==2.32.3
