@@ -93,20 +93,22 @@ def get_notion_tasks():
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 def get_google_calendar_service():
-    """Autentica con Google Calendar sin abrir un navegador."""
+    """Autentica con Google Calendar sin abrir un navegador en GitHub Actions."""
     creds = None
     credentials_json = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_JSON")
 
     if not credentials_json:
         raise ValueError("❌ ERROR: La variable de entorno GOOGLE_CALENDAR_CREDENTIALS_JSON no está definida.")
 
-    # Convertir JSON en string a diccionario
+    # Convertir el JSON almacenado en una variable de entorno a un diccionario
     creds_data = json.loads(credentials_json)
 
-    # Crear credenciales a partir de las credenciales en JSON
+    # Crear flujo de autenticación
     flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
-    creds = flow.run_console()  # Cambia de `run_local_server` a `run_console`
-    
+
+    # Ejecutar la autenticación sin interfaz gráfica
+    creds = flow.run()  
+
     return creds
 
 def get_calendar_id_by_summary(service, summary_name="Calendario"):
