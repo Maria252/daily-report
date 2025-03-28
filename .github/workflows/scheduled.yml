@@ -2,8 +2,8 @@ name: Scheduled job
 
 on:
   schedule:
-    - cron: "0 10 * * 1-5"  # Corre Lunes a Viernes a las 10:00 UTC
-    workflow_dispatch:  # Habilita la ejecución manual
+    - cron: "0 10 * * 1-5"
+  workflow_dispatch:
 
 jobs:
   build:
